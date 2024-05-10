@@ -1,12 +1,15 @@
 /*
-  PicoEncoder.h - Library for reading a quadrature encoder using the PIO on an RP2040
+  PicoEncoder - High resolution quadrature encoder using the PIO on the RP2040
   Created by Paulo Marques, Pedro Pereira, Paulo Costa, 2022
-  Distributed under the MIT license. For full terms, please refer to the LICENSE file.
+  Distributed under the BSD 2-clause license. For full terms, please refer to the LICENSE file.
 */
 #ifndef PicoEncoder_h
 #define PicoEncoder_h
 
 #include "Arduino.h"
+
+#ifdef ARDUINO_ARCH_RP2040
+
 #include "hardware/pio.h"
 
 class PicoEncoder
@@ -84,5 +87,9 @@ class PicoEncoder
     void read_pio_data(uint *step, uint *step_us, uint *transition_us, int *forward);
     uint get_step_start_transition_pos(uint step);
 };
+
+#else // ARCH
+#error PicoEncoder library requires a PIO peripheral and only works on the RP2040 architecture
+#endif
 
 #endif

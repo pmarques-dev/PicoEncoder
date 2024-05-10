@@ -1,4 +1,13 @@
+/*
+  PicoEncoder - High resolution quadrature encoder using the PIO on the RP2040
+  Created by Paulo Marques, Pedro Pereira, Paulo Costa, 2022
+  Distributed under the BSD 2-clause license. For full terms, please refer to the LICENSE file.
+*/
+
 #include "PicoEncoder.h"
+
+#ifdef ARDUINO_ARCH_RP2040
+
 #include "pico_encoder.pio.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
@@ -384,3 +393,7 @@ void PicoEncoder::update(void)
   step = new_step;
   prev_step_us = step_us;
 }
+
+#else // ARCH
+#error PicoEncoder library requires a PIO peripheral and only works on the RP2040 architecture
+#endif
