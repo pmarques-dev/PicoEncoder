@@ -26,6 +26,7 @@ static void set_pwm(float value)
 
 static void measure(void)
 {
+  uint8_t s[4];
   int phases;
 
   // turn on motor
@@ -33,7 +34,7 @@ static void measure(void)
   // wait for the speed to become steady
   delay(500);
   // measure the relative phase sizes
-  phases = encoder.measurePhases(4096);
+  phases = encoder.measurePhases();
   // stop the motor
   set_pwm(0.0);
 
@@ -45,6 +46,23 @@ static void measure(void)
     // otherwise report the phase calibration number
     Serial.print("measurement successful, phases: 0x");
     Serial.println(phases, HEX);
+
+    // print phase sizes in percentage
+    s[0] = phases;
+    s[1] = phases >> 8;
+    s[2] = phases >> 16;
+    s[3] = 256 - (s[0] + s[1] + s[2]);
+    Serial.println("phase sizes:");
+    for (int i = 0 ; i < 4; i++) {
+      Serial.print("  ");
+      Serial.print(i);
+      Serial.print(": ");
+      Serial.print((s[i] * 100 + 128) >> 8);
+      Serial.println("%%");
+    }
+
+    // immediately use the phase measurement
+    encoder.setPhases(phases);
   }  
 }
 

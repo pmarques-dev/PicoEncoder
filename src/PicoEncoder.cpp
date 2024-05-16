@@ -8,11 +8,12 @@
 
 #ifdef ARDUINO_ARCH_RP2040
 
-#include "pico_encoder.pio.h"
-#include "hardware/clocks.h"
-#include "hardware/gpio.h"
-#include "hardware/sync.h"
+#include <pico_encoder.pio.h>
+#include <hardware/clocks.h>
+#include <hardware/gpio.h>
+#include <hardware/sync.h>
 
+#include <pinDefinitions.h>
 
 // global configuration: after this number of samples with no step change, 
 // consider the encoder stopped
@@ -160,7 +161,7 @@ static int substep_calc_speed(int delta_substep, int delta_us)
 
 
 // function to measure the difference between the different steps on the encoder
-int PicoEncoder::measurePhases(int step_count)
+int PicoEncoder::measurePhases(void)
 {
   int forward, count, s1, s2, s3;
   uint cur_us, last_us, step_us, step, last_step, start_us, delta;
@@ -176,17 +177,30 @@ int PicoEncoder::measurePhases(int step_count)
 
   start_us = time_us_32();
 
-  while (count < step_count) {
+  while (1) {
 
     read_pio_data(&step, &step_us, &cur_us, &forward);
 
-    // wait until we have a transition
+    // if we don't have a transition, just check some stopping conditions and
+    // keep waiting for a transition
     if (step == last_step) {
       delta = time_us_32() - start_us;
-      // if we have less than 100 steps per second, this is too slow for
-      // the calibration to produce good results
-      if (count * (1000000 / 100) + 500000 < delta)
+      // if we have less than 20 steps per second, this is too slow for the
+      // calibration to produce good results
+      if (count * (1000000 / 20) + 500000 < delta)
         return -1;
+      
+      // never take more than 10 seconds to run the calibration, even if we only
+      // have 200 steps. Just use whatever information was gathered so far
+      if (delta > 10000000)
+        break;
+
+      // if we already have 1024 steps and have measured for over 2 seconds, we
+      // are fine as well. If we have a really fast step rate, then in two
+      // seconds we may be able to get a high step count
+      if (count > 1024 && delta > 2000000)
+        break;
+
       continue;
     }
 

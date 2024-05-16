@@ -54,13 +54,11 @@ class PicoEncoder
     // positive number that represents the sizes (and can be passed later to
     // setPhases to calibrate the phase sizes). On failure returns a negative
     // number:
-    //  -1 : speed too slow (less than 100 raw steps per second)
+    //  -1 : speed too slow (less than 20 raw steps per second)
     //  -2 : speed too high (while measuring the current step jumped by more than 
     //        one, so either the encoder is rotating to fast or some interrupt
     //        routine is interrupting the code long enough to lose steps)
-    // optionally receives a "step_count" which is the number of raw steps used
-    // to do the calibration
-    int measurePhases(int step_count = 1024);
+    int measurePhases(void);
 
     // set the phase sizes using the result from a previous call to measurePhases
     void setPhases(int phases);
