@@ -234,6 +234,16 @@ int PicoEncoder::measurePhases(void)
 }
 
 
+// some Arduino mbed Pico boards have non trivial pin mappings and require a
+// function to translate. If the function does not exist, provide a weak version
+// that just does a direct mapping to allow the project to compile correctly
+#ifndef digitalPinToPinName
+int __attribute__((weak)) digitalPinToPinName(int pin)
+{
+  return pin;
+}
+#endif
+
 int PicoEncoder::begin(int firstPin, bool pullUp)
 {
   int forward, gpio_pin;
