@@ -235,13 +235,11 @@ int PicoEncoder::measurePhases(void)
 
 
 // some Arduino mbed Pico boards have non trivial pin mappings and require a
-// function to translate. If the function does not exist, provide a weak version
-// that just does a direct mapping to allow the project to compile correctly
-#ifndef digitalPinToPinName
-int __attribute__((weak)) digitalPinToPinName(int pin)
-{
-  return pin;
-}
+// function to translate
+#if defined(ARDUINO_ARCH_MBED)
+static int translate_pin(int pin) { return digitalPinToPinName(pin); }
+#else
+static int translate_pin(int pin) { return pin; }
 #endif
 
 int PicoEncoder::begin(int firstPin, bool pullUp)
@@ -289,7 +287,7 @@ int PicoEncoder::begin(int firstPin, bool pullUp)
   speed = 0;
 
   // save the pin used
-  gpio_pin = digitalPinToPinName(firstPin);
+  gpio_pin = translate_pin(firstPin);
 
   // the PIO init code sets the pins as inputs. Optionally turn on pull ups
   // here if the user asked for it
