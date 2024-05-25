@@ -13,7 +13,6 @@
 #include <hardware/gpio.h>
 #include <hardware/sync.h>
 
-#include <pinDefinitions.h>
 
 // global configuration: after this number of samples with no step change, 
 // consider the encoder stopped
@@ -237,6 +236,7 @@ int PicoEncoder::measurePhases(void)
 // some Arduino mbed Pico boards have non trivial pin mappings and require a
 // function to translate
 #if defined(ARDUINO_ARCH_MBED)
+#include <pinDefinitions.h>
 static int translate_pin(int pin) { return digitalPinToPinName(pin); }
 #else
 static int translate_pin(int pin) { return pin; }
