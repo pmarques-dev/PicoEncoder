@@ -162,8 +162,8 @@ static int substep_calc_speed(int delta_substep, int delta_us)
 // function to measure the difference between the different steps on the encoder
 int PicoEncoder::measurePhases(void)
 {
-  int forward, count, s1, s2, s3;
-  uint cur_us, last_us, step_us, step, last_step, start_us, delta;
+  int forward, s1, s2, s3;
+  uint count, cur_us, last_us, step_us, step, last_step, start_us, delta;
   int64_t sum[4], total;
 
   memset(sum, 0, sizeof(sum));
@@ -244,7 +244,7 @@ static int translate_pin(int pin) { return pin; }
 
 int PicoEncoder::begin(int firstPin, bool pullUp)
 {
-  int forward, gpio_pin;
+  int i, forward, gpio_pin;
 
   // the first encoder needs to load a PIO with the PIO code
   if (encoder_count == 0) {
@@ -257,6 +257,11 @@ int PicoEncoder::begin(int firstPin, bool pullUp)
       return -1; // or give up
     // load the code into the PIO
     pio_add_program(pio_used[0], &pico_encoder_program);
+    // claim all SM's on this PIO, as it's a safer option to avoid having other
+    // libraries thinking they can claim SM's without checking that they can
+    // actually load their code into the PIO
+    for (i = 0; i < 4; i++)
+      pio_sm_claim(pio, i);
 
   } else if (encoder_count == 4) {
     // the 5th encoder needs to try to use the other PIO
@@ -264,6 +269,8 @@ int PicoEncoder::begin(int firstPin, bool pullUp)
     if (!pio_can_add_program(pio_used[1], &pico_encoder_program))
       return -1;
     pio_add_program(pio_used[1], &pico_encoder_program);
+    for (i = 0; i < 4; i++)
+      pio_sm_claim(pio, i);
 
   } else if (encoder_count >= 8) {
     // we don't support more than 8 encoders
@@ -274,9 +281,6 @@ int PicoEncoder::begin(int firstPin, bool pullUp)
   pio = pio_used[encoder_count / 4];
   sm = encoder_count % 4;
   encoder_count++;
-
-  // claim the state machine
-  pio_sm_claim(pio, sm);
 
   // set all fields to zero by default
   prev_trans_pos = 0;
