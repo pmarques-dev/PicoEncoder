@@ -31,6 +31,9 @@ static inline void pico_encoder_program_init(PIO pio, uint sm, uint pin_A)
 {
 	uint pin_state, position, ints;
 
+  pio_gpio_init(pio, pin_A);
+  pio_gpio_init(pio, pin_A + 1);
+
 	pio_sm_set_consecutive_pindirs(pio, sm, pin_A, 2, false);
 
 	pio_sm_config c = pico_encoder_program_get_default_config(0);
@@ -242,35 +245,50 @@ static int translate_pin(int pin) { return digitalPinToPinName(pin); }
 static int translate_pin(int pin) { return pin; }
 #endif
 
+// try to claim all SM's and load the program to PIO 'pio'. Return true on
+// success, false on failure
+static bool pico_encoder_claim_pio(PIO pio)
+{
+  // check that we can load the program on this PIO
+  if (!pio_can_add_program(pio, &pico_encoder_program))
+    return false;
+
+  // check that all SM's are free. Some libraries claim an SM and later load the
+  // PIO code and that would not interact well with code that uses the entire
+  // PIO code space. So just make sure we can claim all the SM's to prevent this
+  for (int i = 0; i < 4; i++)
+    if (pio_sm_is_claimed(pio, i))
+      return false;
+
+  // claim all SM's
+  for (int i = 0; i < 4; i++)
+    pio_sm_claim(pio, i);
+
+  // load the code into the PIO
+  pio_add_program(pio_used[0], &pico_encoder_program);
+  
+  return true;
+}
+
 int PicoEncoder::begin(int firstPin, bool pullUp)
 {
-  int i, forward, gpio_pin;
+  int forward, gpio_pin;
 
   // the first encoder needs to load a PIO with the PIO code
   if (encoder_count == 0) {
     // it can either use pio0
-    if (pio_can_add_program(pio0, &pico_encoder_program))
+    if (pico_encoder_claim_pio(pio0))
       pio_used[0] = pio0;
-    else if (pio_can_add_program(pio1, &pico_encoder_program))
+    else if (pico_encoder_claim_pio(pio1))
       pio_used[0] = pio1; // or pio1
     else
       return -1; // or give up
-    // load the code into the PIO
-    pio_add_program(pio_used[0], &pico_encoder_program);
-    // claim all SM's on this PIO, as it's a safer option to avoid having other
-    // libraries thinking they can claim SM's without checking that they can
-    // actually load their code into the PIO
-    for (i = 0; i < 4; i++)
-      pio_sm_claim(pio, i);
 
   } else if (encoder_count == 4) {
     // the 5th encoder needs to try to use the other PIO
     pio_used[1] = (pio_used[0] == pio0) ? pio1 : pio0;
-    if (!pio_can_add_program(pio_used[1], &pico_encoder_program))
+    if (!pico_encoder_claim_pio(pio_used[1]))
       return -1;
-    pio_add_program(pio_used[1], &pico_encoder_program);
-    for (i = 0; i < 4; i++)
-      pio_sm_claim(pio, i);
 
   } else if (encoder_count >= 8) {
     // we don't support more than 8 encoders
