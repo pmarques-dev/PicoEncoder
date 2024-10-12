@@ -265,7 +265,7 @@ static bool pico_encoder_claim_pio(PIO pio)
     pio_sm_claim(pio, i);
 
   // load the code into the PIO
-  pio_add_program(pio_used[0], &pico_encoder_program);
+  pio_add_program(pio, &pico_encoder_program);
   
   return true;
 }
