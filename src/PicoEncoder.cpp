@@ -14,7 +14,7 @@
 #include <hardware/sync.h>
 
 
-// global configuration: after this number of samples with no step change, 
+// global configuration: after this number of samples with no step change,
 // consider the encoder stopped
 static const int idle_stop_samples = 3;
 
@@ -74,11 +74,11 @@ static inline void pico_encoder_program_init(PIO pio, uint sm, uint pin_A)
 		case 1: position = 3; break;
 		case 2: position = 1; break;
 		case 3: position = 2; break;
-	} 
+	}
 	pio_sm_exec(pio, sm, pio_encode_set(pio_y, position));
 
 	pio_sm_set_enabled(pio, sm, true);
-	
+
 	restore_interrupts(ints);
 }
 
@@ -86,7 +86,7 @@ static inline void pico_encoder_get_counts(PIO pio, uint sm, uint *step, int *cy
 {
 	int i, pairs;
 	uint ints;
-	
+
 	pairs = pio_sm_get_rx_fifo_level(pio, sm) >> 1;
 
 	// read all data with interrupts disabled, so that there can not be a
@@ -106,15 +106,18 @@ static inline void pico_encoder_get_counts(PIO pio, uint sm, uint *step, int *cy
 
 PicoEncoder::PicoEncoder()
 {
-  // we set the default phase sizes here, so that if the user sets the phase 
+  // we set the default phase sizes here, so that if the user sets the phase
   // sizes before calling begin, those will override the default and it will
   // just work
-  setPhases(0x404040);
+  setPhases(DEFAULT_PHASES);
 
   // just set the position/speed fields to zero
   position = 0;
   speed = 0;
   step = 0;
+
+  // reset incremental calibration data
+  resetAutoCalibration();
 }
 
 void PicoEncoder::setPhases(int phases)
@@ -124,6 +127,14 @@ void PicoEncoder::setPhases(int phases)
   calibration_data[2] = calibration_data[1] + ((phases >> 8) & 0xFF);
   calibration_data[3] = calibration_data[2] + ((phases >> 16) & 0xFF);
 }
+
+int PicoEncoder::getPhases(void)
+{
+  return calibration_data[1] |
+    ((calibration_data[2] - calibration_data[1]) << 8) |
+    ((calibration_data[3] - calibration_data[2]) << 16);
+}
+
 
 // internal helper functions
 
@@ -154,85 +165,88 @@ uint PicoEncoder::get_step_start_transition_pos(uint step)
   return ((step << 6) & 0xFFFFFF00) | calibration_data[step & 3];
 }
 
-// compute speed in "sub-steps per 2^20 us" from a delta substep position and
-// delta time in microseconds
-static int substep_calc_speed(int delta_substep, int delta_us)
+
+// incrementally update the phase measure, so that the substep estimation takes
+// phase sizes into account. The function is not allowed to block for more than
+// "period_us" microseconds
+void PicoEncoder::autoCalibratePhases(void)
 {
-  return ((int64_t) delta_substep << 20) / delta_us;
-}
+  uint cur_us, step_us, step, delta;
+  int forward, steps, need_rescale, i, total;
 
+  // read raw encoder data. Reading encoder data is an idempotent operation,
+  // so we can still continue calling update and everything should just work
+  read_pio_data(&step, &step_us, &cur_us, &forward);
 
-// function to measure the difference between the different steps on the encoder
-int PicoEncoder::measurePhases(void)
-{
-  int forward, s1, s2, s3;
-  uint count, cur_us, last_us, step_us, step, last_step, start_us, delta;
-  int64_t sum[4], total;
+  // if we are still on the same step as before, there is nothing to see
+  if (step == calib_last_step)
+    return;
 
-  memset(sum, 0, sizeof(sum));
+  // if calib_last_us is zero, that means we haven't started yet, so don't try
+  // to use a delta to nothing
+  if (calib_last_us == 0)
+    delta = 0;
+  else
+    delta = cur_us - calib_last_us;
+  steps = calib_last_step - step;
 
-  // keep reading the PIO state in a tight loop to get all steps and use the
-  // transition measures of the PIO code to measure the time of each step
-  last_step = 0;
-  last_us = 0;
-  count = 0;
+  calib_last_step = step;
+  calib_last_us = cur_us;
 
-  start_us = time_us_32();
-
-  while (1) {
-
-    read_pio_data(&step, &step_us, &cur_us, &forward);
-
-    // if we don't have a transition, just check some stopping conditions and
-    // keep waiting for a transition
-    if (step == last_step) {
-      delta = time_us_32() - start_us;
-      // if we have less than 20 steps per second, this is too slow for the
-      // calibration to produce good results
-      if (count * (1000000 / 20) + 500000 < delta)
-        return -1;
-      
-      // never take more than 10 seconds to run the calibration, even if we only
-      // have 200 steps. Just use whatever information was gathered so far
-      if (delta > 10000000)
-        break;
-
-      // if we already have 1024 steps and have measured for over 2 seconds, we
-      // are fine as well. If we have a really fast step rate, then in two
-      // seconds we may be able to get a high step count
-      if (count > 1024 && delta > 2000000)
-        break;
-
-      continue;
-    }
-
-    // check that we are not skipping steps
-    if (count > 10 && abs((int)(last_step - step)) > 1)
-      return -2;
-
-    // sum the step period in the correct step sum
-    if (last_us != 0) {
-      if (forward)
-        sum[(step - 1) & 3] += cur_us - last_us;
-      else
-        sum[(step + 1) & 3] += cur_us - last_us;
-    }
-
-    last_step = step;
-    last_us = cur_us;
-    count++;
+  // if we've skipped a step, we can not use this information (and we need to
+  // reset the data). Also, do the same if we didn't skip a step but the last
+  // step was just too slow to be usable (> 20ms)
+  if (abs(steps) > 1 || delta > 20000 || delta == 0) {
+    memset(calib_data, 0, sizeof(calib_data));
+    return;
   }
 
+  // save the step period in the correct data slot
+  if (forward)
+    calib_data[(step - 1) & 3] = delta;
+  else
+    calib_data[(step + 1) & 3] = delta;
+
+  // if we don't have a measure of all the steps yet, just continue
+  if (calib_data[0] == 0 || calib_data[1] == 0 || calib_data[2] == 0 || calib_data[3] == 0)
+    return;
+
+  // otherwise, use the measurement. Sum the just acquired 4 step sizes to the
+  // step size total accumulator. Check if the values in the accumulator are
+  // getting too big and halve them in that case, to keep them manageable
+  need_rescale = 0;
+  for (i = 0; i < 4; i++) {
+    calib_sum[i] += calib_data[i];
+    calib_data[i] = 0;
+    if (calib_sum[i] > 250000000)
+      need_rescale = 1;
+  }
+
+  total = 0;
+  for (i = 0; i < 4; i++) {
+    if (need_rescale)
+      calib_sum[i] >>= 1;
+    total += calib_sum[i];
+  }
+  calib_count++;
+
+  // if we don't have at least 32 full measurements, don't use them yet, as
+  // we may still have a big bias (this is just an heuristic)
+  if (calib_count < 32)
+    return;
+
   // scale the sizes to a total of 256 to be used as sub-steps
-  total = sum[0] + sum[1] + sum[2] + sum[3];
-  s1 = (sum[0] * 256 + total / 2) / total;
-  s2 = ((sum[0] + sum[1]) * 256 + total / 2) / total;
-  s3 = ((sum[0] + sum[1] + sum[2]) * 256 + total / 2) / total;
+  calibration_data[0] = 0;
+  calibration_data[1] = (calib_sum[0] * 256 + total / 2) / total;
+  calibration_data[2] = ((calib_sum[0] + calib_sum[1]) * 256 + total / 2) / total;
+  calibration_data[3] = ((calib_sum[0] + calib_sum[1] + calib_sum[2]) * 256 + total / 2) / total;
+}
 
-  s3 -= s2;
-  s2 -= s1;
-
-  return s1 | (s2 << 8) | (s3 << 16);
+void PicoEncoder::resetAutoCalibration(void)
+{
+  memset(calib_sum, 0, sizeof(calib_sum));
+  calib_count = 0;
+  calib_last_us = 0;
 }
 
 
@@ -266,7 +280,7 @@ static bool pico_encoder_claim_pio(PIO pio)
 
   // load the code into the PIO
   pio_add_program(pio, &pico_encoder_program);
-  
+
   return true;
 }
 
@@ -336,6 +350,13 @@ int PicoEncoder::begin(int firstPin, bool pullUp)
 }
 
 
+// compute speed in "sub-steps per 2^20 us" from a delta substep position and
+// delta time in microseconds
+static int substep_calc_speed(int delta_substep, int delta_us)
+{
+  return ((int64_t) delta_substep << 20) / delta_us;
+}
+
 // read the PIO data and update the speed / position estimate
 void PicoEncoder::update(void)
 {
@@ -399,7 +420,7 @@ void PicoEncoder::update(void)
     // transition is closer to now than the previous sample time, we should
     // use the slopes from the last sample to the transition as these will
     // have less numerical issues
-    if (prev_trans_us > prev_step_us && 
+    if (prev_trans_us > prev_step_us &&
         (int)(prev_trans_us - prev_step_us) > (int)(step_us - prev_trans_us)) {
       speed_high = substep_calc_speed(prev_trans_pos - prev_low, prev_trans_us - prev_step_us);
       speed_low = substep_calc_speed(prev_trans_pos - prev_high, prev_trans_us - prev_step_us);
@@ -421,15 +442,18 @@ void PicoEncoder::update(void)
 
     // estimate the current position by applying the speed estimate to the
     // most recent transition
-    position = prev_trans_pos + (((int64_t)speed_2_20 * (step_us - transition_us)) >> 20);
+    internal_position = prev_trans_pos + (((int64_t)speed_2_20 * (step_us - transition_us)) >> 20);
 
     // make sure the position estimate is between "low" and "high", as we
     // can be sure the actual current position must be in this range
-    if ((int)(position - high) > 0)
-      position = high;
-    else if ((int)(position - low) < 0)
-      position = low;
+    if ((int)(internal_position - high) > 0)
+      internal_position = high;
+    else if ((int)(internal_position - low) < 0)
+      internal_position = low;
   }
+
+  // compute the user position, as the difference to the reset position
+  position = internal_position - position_reset;
 
   // save the current values to use on the next sample
   prev_low = low;
@@ -437,6 +461,13 @@ void PicoEncoder::update(void)
   step = new_step;
   prev_step_us = step_us;
 }
+
+void PicoEncoder::resetPosition(void)
+{
+  position_reset = internal_position;
+  position = 0;
+}
+
 
 #else // ARCH
 #error PicoEncoder library requires a PIO peripheral and only works on the RP2040 architecture

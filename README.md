@@ -47,13 +47,13 @@ Returns 0 on success, -1 if there is no PIO available, -2 if there are too many 
 
 The begin method allocates the necessary PIO resources. The PIO code uses all 32 instructions on the PIO, so it can not share the PIO with other PIO programs. However it can run up to 4 encoder instances in that PIO (and up to 8 in total using both PIO units on the RP2040).
 
-To make a measurement call the `update` method. This will update the `position`, `speed` and `step` fields on the encoder instance.
+To make a measurement call the `update` method. This will update the `position`, `speed` and `step` fields on the encoder instance:
 
-`position` is given in "sub-steps". You can think of a sub-step as 1/64th of a step. For example, an encoder that advertises 100 steps per revolution, will actually have 100 full cycles per revolution, so 400 steps in this context and the position field will go up by 400 * 64 = 25600 in a single revolution
+  - `position` is given in "sub-steps". You can think of a sub-step as 1/64th of a step. For example, an encoder that advertises 100 steps per revolution, will actually have 100 full cycles per revolution, so 400 steps in this context and the position field will go up by 400 * 64 = 25600 in a single revolution. The position field is useful in situations where the encoder is measuring something that doesn't accumulate indefinitely, like the position of a 3D printer head. There is a `resetPosition` method that can be used to set the zero position according to an absolute external reference, like a limit switch. When `resetPosition` is called, the current position will become the new zero position
 
-`speed` is given in "sub-steps per second"
+  - `speed` is given in "sub-steps per second". This is the most up to date speed estimate. Don't use differences in the position field to estimate speed as that will produce a worse estimate than to just read the speed field directly
 
-`step` is the current position in steps
+  - `step` is the current position in steps, like what would be returned by a classical quadrature encoder hardware
 
 For more details, see the SpeedMeasure example distributed with the library.
 
@@ -62,16 +62,20 @@ For more details, see the SpeedMeasure example distributed with the library.
 
 To increase the precision of the speed estimate, the user can run a calibration function to measure the relative sizes of the phases of the encoder. The sub-step code will then use this information to compensate the phase size differences while computing speed estimates. This is not strictly necessary, but if not done, the code will assume equal size phases, which will introduce noise, especially at low speeds.
 
-Note that for an encoder to have perfectly balanced 90 degree phases, each individual phase would require a perfect 50% duty cycle and the phases would need to be exactly 90 degrees apart. That is rarely the case in low cost encoders.
+Note that for an encoder to have perfectly balanced 90 degree phases, each individual phase would require a perfect 50% duty cycle and the phases would need to be exactly 90 degrees apart. That is almost never the case in low cost encoders.
 
-To calibrate phase sizes (optional, but highly recommended), there are two more methods:
+The simplest way to do phase calibration is to just call `autoCalibratePhases` during the idle time of the main control loop (see the SpeedMeasure example). This method will look for encoder transitions, measure relative phase sizes and adjust the phase size calibration, all automatically.
 
-  - `setPhases`: set the relative phase sizes. This function should always be called at program start, but can be called before or after `begin`
-  - `measurePhases`: this function should be used offline, on a test program, to get the phase sizes of an encoder. After getting the sizes, these can be passed as a constant to `setPhases` without having to run this function again. To measure the phase sizes, make the encoder rotate and call this function to measure the relative sizes of the encoder phases. It returns a negative value on error (-1: speed too slow, -2: speed too high). On success returns a value that can be passed to setPhases to set the phase sizes. Ideally, the encoder should be rotating at a constant speed of around 2.000 steps per second, but any value from 200 sps to 20.000 sps without any abrupt changes in speed, should work well
+The chart below shows the difference between an uncalibrated speed measure and a calibrated one (and the speed estimate we would get from raw steps only). Note that both versions are the same until around sample 53 when the auto calibration code has enough information to start compensating phase sizes.
 
-Note that `measurePhases` returns -2 when it notices if missed a step. This can happen because the encoder is running at a high step rate, but more likely there is some interrupt function that is holding up the CPU for too long.
+![](images/calib.svg)
 
-If you are curious about how unbalanced your encoder is, the value returned has one phase size per byte, so a value of 0x404040 would represent a perfect encoder (the fourth size is implied by being 256 minus the sum of the other three).
+The only downside of this method is that there will be a short period at system startup where the PicoEncoder won't have phase calibration information and will operate as if the phases have the same size. This is usually not a problem, but it can be avoided with a more complex sequence:
+  - call `autoCalibrationDone` to check if the auto calibration process has already completed the phase size measurement. Continue running `autoCalibratePhases` until it does
+  - when the auto calibration is done, call `getPhases` to get an integer representing the phase sizes. Save this number
+  - on the initialization code, call `setPhases` passing the value saved previously. This will immediately set the phase calibration at init time and avoid the learning period. After calling `setPhases` there is no need to call `autoCalibratePhases` any more
+
+If you are curious about how unbalanced your encoder is, the value returned by `getPhases` has one phase size per byte, so a value of 0x404040 would represent a perfect encoder (the fourth size is implied by being 256 minus the sum of the other three).
 
 
 ## Sub-step vs simple quadrature encoder

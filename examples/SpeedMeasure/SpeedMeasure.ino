@@ -1,7 +1,12 @@
 #include "Arduino.h"
 #include "PicoEncoder.h"
 
+// declare two encoders that will actually be reading the same pins:
+// one will measure the phase sizes and compensate for differences, while
+// the other will work as if the phase sizes were perfectly uniform
 PicoEncoder encoder;
+PicoEncoder non_calibrated_encoder;
+
 
 // this section is an optional DC motor control code to help test an encoder
 // attached to a DC motor (and calibrate phase sizes)
@@ -12,6 +17,9 @@ const int pwm_pin = p11;
 // must be consecutive pins on the rp2040
 const int encoder_pinA = p5;
 const int encoder_pinB = p6;
+
+// keep track of current time
+uint period_start_us;
 
 static void set_pwm(float value)
 {
@@ -24,47 +32,6 @@ static void set_pwm(float value)
   }
 }
 
-static void measure(void)
-{
-  uint8_t s[4];
-  int phases;
-
-  // turn on motor
-  set_pwm(0.25);
-  // wait for the speed to become steady
-  delay(500);
-  // measure the relative phase sizes
-  phases = encoder.measurePhases();
-  // stop the motor
-  set_pwm(0.0);
-
-  // check the result, if it's negative, report the error
-  if (phases < 0) {
-    Serial.print("error measuring phases: ");
-    Serial.println(phases);
-  } else {
-    // otherwise report the phase calibration number
-    Serial.print("measurement successful, phases: 0x");
-    Serial.println(phases, HEX);
-
-    // print phase sizes in percentage
-    s[0] = phases;
-    s[1] = phases >> 8;
-    s[2] = phases >> 16;
-    s[3] = 256 - (s[0] + s[1] + s[2]);
-    Serial.println("phase sizes:");
-    for (int i = 0 ; i < 4; i++) {
-      Serial.print("  ");
-      Serial.print(i);
-      Serial.print(": ");
-      Serial.print((s[i] * 100 + 128) >> 8);
-      Serial.println("%%");
-    }
-
-    // immediately use the phase measurement
-    encoder.setPhases(phases);
-  }  
-}
 
 void setup()
 {
@@ -74,15 +41,13 @@ void setup()
   pinMode(pwm_pin, OUTPUT);
   set_pwm(0);
 
+  // use the same pins for both the calibrated and non-calibrated encoders
   encoder.begin(encoder_pinA);
+  non_calibrated_encoder.begin(encoder_pinA);
 
   delay(2000);
 
-  // comment after running one measurement
-  measure();
-
-  // replace with the value measured
-  encoder.setPhases(0x334B35);
+  period_start_us = time_us_32();
 }
 
 void loop()
@@ -91,19 +56,35 @@ void loop()
 
   count++;
   if ((count & 63) == 0) {
-    if (count > 500)
+    if (count > 1000)
       set_pwm(0.0);
     else
       set_pwm(random(-100, 100) * 0.01);
   }
 
-  delay(10);
-  encoder.update();
+  // wait for the next sample period, while calling "autoCalibratePhases"
+  // to measure the phase sizes dynamically. If we had two encoders (to
+  // read two motors, for instance), we could call both autoCalibratePhases
+  // methods here, to calibrate both encoders simultaneously
+  while ((int)(time_us_32() - period_start_us) < 10000)
+    encoder.autoCalibratePhases();
+  period_start_us += 10000;
 
-  Serial.print("speed: ");
-  Serial.print(encoder.speed);
-  Serial.print(", position: ");
-  Serial.print(encoder.position);
-  Serial.print(", step: ");
-  Serial.println(encoder.step);
+  encoder.update();
+  non_calibrated_encoder.update();
+
+  if (count < 1050) {
+    Serial.print("speed: ");
+    Serial.print(encoder.speed);
+    Serial.print(", position: ");
+    Serial.print(encoder.position);
+    Serial.print(", step: ");
+    Serial.print(encoder.step);
+    if (encoder.autoCalibrationDone()) {
+      Serial.print(", phases: 0x");
+      Serial.print(encoder.getPhases(), HEX);
+    }
+    Serial.print(", non calibrated encoder speed: ");
+    Serial.println(non_calibrated_encoder.speed);
+  }
 }
