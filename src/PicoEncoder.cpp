@@ -218,7 +218,7 @@ void PicoEncoder::autoCalibratePhases(void)
   for (i = 0; i < 4; i++) {
     calib_sum[i] += calib_data[i];
     calib_data[i] = 0;
-    if (calib_sum[i] > 250000000)
+    if (calib_sum[i] > 2500000)
       need_rescale = 1;
   }
 
