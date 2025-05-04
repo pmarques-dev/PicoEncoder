@@ -10,9 +10,9 @@ This works relatively well for high counts, but at low speeds (or high sample ra
 
 A different approach that would work better at low speeds, would be to measure the time it takes to advance one step and use its inverse to compute the speed. For instance, if one step takes 540us, then the speed is 1/0.000540 = ~1852 steps per second.
 
-Unfortunately, as speed increases the resolution of this method decreases rapidly. At 100.000 steps per second, a step takes 10us. Measuring 9, 10 or 11 us per step will give speeds of 111k, 100k or 90k steps per second, respectively. 
+Unfortunately, as speed increases the resolution of this method decreases rapidly. At 100.000 steps per second, a step takes 10us. Measuring 9, 10 or 11 us per step will give speeds of 111k, 100k or 90k steps per second, respectively.
 
-Moreover, especially in low cost encoders, the phases are not all the same size which introduces another source of measurement noise if not compensated properly. 
+Moreover, especially in low cost encoders, the phases are not all the same size which introduces another source of measurement noise if not compensated properly.
 
 
 ## The Solution
@@ -84,7 +84,7 @@ Compared with a simple step counting solution, this library has the advantage th
 
 Like with an hardware encoder, it doesn't use CPU time while counting steps and it's only the update function that uses CPU time. Note that this function is called at the control frequency of your system, say 100Hz, and so the CPU time used is independent of the step rate of the encoder. To use as little CPU as possible, this function only uses integer arithmetic.
 
-Note: the `PicoEncoder` class has a `step` field that contains the same step count that would have been returned by a simple quadrature encoder. This can be useful if, for instance, we have a project with a couple of DC motors with encoders (that would benefit from using the sub-step version), but also a rotary encoder for the user interface (for which we only need integer steps). 
+Note: the `PicoEncoder` class has a `step` field that contains the same step count that would have been returned by a simple quadrature encoder. This can be useful if, for instance, we have a project with a couple of DC motors with encoders (that would benefit from using the sub-step version), but also a rotary encoder for the user interface (for which we only need integer steps).
 
 ## Implementation details
 
@@ -108,3 +108,8 @@ On top of using actual transitions to compute the speed, the current step positi
 
 To compensate for unbalanced phase sizes, the sub-step position assigned to each hardware step transition is not a multiple of 64 but instead depends on the phase size calibration. The lower bound of phase 0 is always a multiple of 256, though.
 
+## References
+
+The base algorithm for PicoEncoder (using variable acquisition window and quadrature phase recovery) comes from this paper: [Improving Incremental Encoder Measurement: Variable Acquisition Window and Quadrature Phase Compensation to Minimize Acquisition Errors](https://bibliotecadigital.ipb.pt/bitstream/10198/15052/4/Improving...Acquisition_Errors.pdf)
+
+The actual implementation deviates considerably from the paper, as it tries to make the best possible use of the PIO hardware and minimize CPU intervention.
